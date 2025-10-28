@@ -4,69 +4,89 @@ namespace App\Livewire;
 
 use App\Models\TryoutPackage;
 use App\Models\UserTryout;
+use App\Models\Subject;
 use Livewire\Component;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\View\View;
 
 class ShowTryoutPackageList extends Component
 {
-    public function startTryout($packageId)
+    public function viewPackageDetails($packageId)
     {
-        // Check if user is authenticated
-        if (!Auth::check()) {
-            return redirect()->route('login');
+        $userId = Auth::id();
+        
+        // 1. Cari UserTryout yang sudah ada (baik ongoing maupun completed)
+        $userTryout = UserTryout::where('user_id', $userId)
+                                ->where('tryout_package_id', $packageId)
+                                ->first();
+
+        // 2. Jika sudah ada UserTryout
+        if ($userTryout) {
+            if ($userTryout->status === 'completed') {
+                // Jika sudah completed, redirect ke halaman hasil keseluruhan
+                return $this->redirect(route('tryout.result.overall', $userTryout->id));
+            } else {
+                // Jika masih ongoing, redirect ke halaman detail untuk melanjutkan
+                return $this->redirect(route('tryout.detail', $userTryout->id));
+            }
         }
 
-        // Check if user already has an ongoing tryout for this package
-        $existingTryout = UserTryout::where('user_id', Auth::id())
-            ->where('tryout_package_id', $packageId)
-            ->where('status', 'ongoing')
-            ->first();
-
-        if ($existingTryout) {
-            // Continue existing tryout
-            return redirect()->route('tryout.conduct', $existingTryout->id);
-        }
-
-        // Check if user has already completed this package
-        $completedTryout = UserTryout::where('user_id', Auth::id())
-            ->where('tryout_package_id', $packageId)
-            ->where('status', 'completed')
-            ->first();
-
-        if ($completedTryout) {
-            // Show result instead of starting new tryout
-            return redirect()->route('tryout.result', $completedTryout->id);
-        }
-
-        // Create new tryout session
+        // 3. Jika belum ada UserTryout, buat baru beserta 7 subtesnya
         $userTryout = UserTryout::create([
-            'user_id' => Auth::id(),
+            'user_id' => $userId,
             'tryout_package_id' => $packageId,
-            'start_time' => now(),
             'status' => 'ongoing',
+            'start_time' => now(), // Tandai kapan paket ini pertama kali dibuka
         ]);
 
-        return redirect()->route('tryout.conduct', $userTryout->id);
-    }
+        // Ambil 7 subtes (berdasarkan `subtest_order` yang sudah kita buat)
+        $subjects = Subject::whereNotNull('subtest_order')->orderBy('subtest_order')->get();
 
-    public function render()
-    {
-        $packages = TryoutPackage::published()
-            ->with('questions')
-            ->get();
-
-        // Get user's tryout status for each package
-        $userTryouts = [];
-        if (Auth::check()) {
-            $userTryouts = UserTryout::where('user_id', Auth::id())
-                ->whereIn('tryout_package_id', $packages->pluck('id'))
-                ->get()
-                ->keyBy('tryout_package_id');
+        foreach ($subjects as $subject) {
+            // Buat 7 record progres subtes
+            $userTryout->subtestProgresses()->create([
+                'subject_id' => $subject->id,
+                // Subtes pertama (order = 1) di-unlock, sisanya 'locked'
+                'status' => ($subject->subtest_order == 1) ? 'unlocked' : 'locked',
+            ]);
         }
 
+        // 4. Redirect ke halaman detail untuk memulai tryout baru
+        return $this->redirect(route('tryout.detail', $userTryout->id));
+    }
+
+    public function render(): View
+    {
+        $packages = TryoutPackage::published()
+            ->withCount('questions')
+            ->get();
+
+        // Ambil data paket tryout beserta status pengerjaan user
+        $packagesWithStatus = $packages->map(function ($package) {
+            $package->user_status = 'not_started'; // Default status
+            $package->user_tryout = null;
+            $package->score = null;
+
+            if (Auth::check()) {
+                $userTryout = UserTryout::where('user_id', Auth::id())
+                    ->where('tryout_package_id', $package->id)
+                    ->first();
+
+                if ($userTryout) {
+                    $package->user_tryout = $userTryout;
+                    $package->user_status = $userTryout->status; // 'ongoing' atau 'completed'
+                    
+                    if ($userTryout->status === 'completed') {
+                        $package->score = $userTryout->score;
+                    }
+                }
+            }
+
+            return $package;
+        });
+
         return view('livewire.show-tryout-package-list', [
-            'packages' => $packages,
-            'userTryouts' => $userTryouts,
+            'packages' => $packagesWithStatus,
         ]);
     }
 }

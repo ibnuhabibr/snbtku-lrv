@@ -14,10 +14,12 @@ class UserTryoutAnswer extends Model
         'question_id',
         'user_answer',
         'is_correct',
+        'is_flagged',
     ];
 
     protected $casts = [
         'is_correct' => 'boolean',
+        'is_flagged' => 'boolean',
     ];
 
     /**

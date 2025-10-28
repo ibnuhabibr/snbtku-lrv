@@ -63,6 +63,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Get the user's practice progress.
+     */
+    public function practiceProgresses()
+    {
+        return $this->hasMany(UserPracticeProgress::class);
+    }
+
+    /**
      * Check if user is admin.
      */
     public function isAdmin()

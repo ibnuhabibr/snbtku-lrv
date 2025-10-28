@@ -49,6 +49,18 @@ class UserTryout extends Model
     }
 
     /**
+     * Get the subtest progresses for this tryout.
+     * Relasi ke 7 progres subtes
+     */
+    public function subtestProgresses()
+    {
+        return $this->hasMany(UserSubtestProgress::class)
+                    ->join('subjects', 'user_subtest_progress.subject_id', '=', 'subjects.id')
+                    ->select('user_subtest_progress.*', 'subjects.subtest_order') // Pastikan subtest_order di-select
+                    ->orderBy('subjects.subtest_order'); // Pastikan order by ini ada
+    }
+
+    /**
      * Scope a query to only include ongoing tryouts.
      */
     public function scopeOngoing($query)

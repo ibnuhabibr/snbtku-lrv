@@ -24,7 +24,7 @@ class TryoutPackage extends Model
         return $this->belongsToMany(Question::class, 'tryout_package_question')
                     ->withPivot('order')
                     ->withTimestamps()
-                    ->orderBy('pivot_order');
+                    ->orderBy('order');
     }
 
     /**

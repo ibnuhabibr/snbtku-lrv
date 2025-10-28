@@ -1,0 +1,222 @@
+PERHATIAN AI AGENT: Lakukan perbaikan pada fitur Bank Soal (PracticeArea component & view) untuk mengatasi 3 bug: teks feedback salah, checkpoint tidak berfungsi/soal acak saat refresh, dan UI mobile yang buruk.
+________________________________________
+1. Perbaikan Teks Feedback (resources/views/livewire/bank-soal/practice-area.blade.php)
+Masalah: Teks feedback ("Jawaban Benar/Salah") selalu menampilkan pesan "Salah" meskipun styling visualnya (hijau/merah) sudah benar.
+Tindakan:
+1.	Buka file resources/views/livewire/bank-soal/practice-area.blade.php.
+2.	Cari section Feedback & Pembahasan (di dalam div x-data="{ show: @entangle('showExplanation') }").
+3.	Cari div yang menampilkan teks feedback (yang punya class @if($isCorrect === true) bg-green-50 ...).
+4.	Periksa dan perbaiki logic @if/@elseif/@else di dalamnya agar menampilkan teks yang benar:
+Blade
+{{-- Di dalam div Feedback --}}
+<div class="mb-4 p-4 rounded-lg border 
+    @if($isCorrect === true) bg-green-50 border-green-300 text-green-800 
+    @elseif($isCorrect === false) bg-red-50 border-red-300 text-red-800 
+    @else bg-gray-50 border-gray-300 text-gray-800 @endif">
+
+    {{-- PASTIKAN LOGIC INI BENAR --}}
+    @if($isCorrect === true)
+        <p class="font-semibold"><svg class="inline w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">...</svg> Jawaban Kamu Benar!</p>
+    @elseif($isCorrect === false)
+        <p class="font-semibold"><svg class="inline w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">...</svg> Jawaban Kamu Salah.</p>
+        <p class="text-sm mt-1">Jawaban yang benar: <span class="uppercase font-bold">{{ $currentQuestion?->correct_answer }}</span>.</p> {{-- Tambah ? --}}
+    @elseif($isCorrect === null && $showExplanation) {{-- Tidak Menjawab --}}
+         <p class="font-semibold"><svg class="inline w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">...</svg> Kamu tidak memilih jawaban.</p>
+         <p class="text-sm mt-1">Jawaban yang benar: <span class="uppercase font-bold">{{ $currentQuestion?->correct_answer }}</span>.</p> {{-- Tambah ? --}}
+    @endif
+    {{-- AKHIR PERBAIKAN LOGIC --}}
+</div>
+________________________________________
+2. Perbaikan Bug Checkpoint & Urutan Soal (app/Livewire/BankSoal/PracticeArea.php)
+Masalah:
+•	Saat halaman di-refresh, user tidak kembali ke soal terakhir yang dilihat (last_viewed_question_id), malah ke soal random.
+•	Urutan soal terasa acak setelah refresh.
+Akar Masalah:
+•	Logic loadQuestion($lastQuestionId) salah dalam menggunakan checkpoint dan mungkin tidak konsisten menerapkan orderBy('id', 'asc').
+•	Perhitungan $questionCounter saat resume kemungkinan salah.
+Tindakan: Ganti total method loadQuestion dan sesuaikan selectTopic.
+1.	Buka file app/Livewire/BankSoal/PracticeArea.php.
+2.	Ganti method loadQuestion dengan logic baru yang lebih robust:
+PHP
+private function loadQuestion($pivotQuestionId = null, $direction = 'next') // $pivotQuestionId: ID soal SEBELUMNYA (jika next) atau SESUDAHNYA (jika prev)
+{
+    if (!$this->activeTopic) return;
+
+    $query = $this->activeTopic->questions()->orderBy('id', 'asc'); // SELALU ORDER BY ID ASC
+
+    $targetQuestion = null;
+
+    if ($direction === 'next') {
+        if ($pivotQuestionId) {
+             // Cari soal SETELAH pivot ID
+            $targetQuestion = (clone $query)->where('id', '>', $pivotQuestionId)->first();
+        } else {
+             // Jika tidak ada pivot (awal), ambil soal pertama
+            $targetQuestion = (clone $query)->first();
+        }
+        // Jika tidak ada soal SETELAH pivot (sudah di akhir), loop ke awal
+        if (!$targetQuestion && $this->totalQuestionsInTopic > 0) {
+             $targetQuestion = (clone $query)->first(); 
+             // session()->flash('info', 'Anda telah mencapai soal terakhir. Soal dimulai dari awal.');
+        }
+    } 
+    elseif ($direction === 'prev') {
+         if ($pivotQuestionId) {
+             // Cari soal SEBELUM pivot ID
+             $targetQuestion = (clone $query)->where('id', '<', $pivotQuestionId)->orderBy('id', 'desc')->first(); 
+         }
+         // Jika tidak ada pivot ATAU tidak ada soal sebelumnya, tetap di soal ini (jangan load apa2)
+    }
+    elseif ($direction === 'resume' && $pivotQuestionId) {
+         // Langsung load soal DENGAN ID checkpoint
+          $targetQuestion = (clone $query)->find($pivotQuestionId);
+         // Jika checkpoint tidak valid (misal soal dihapus), fallback ke soal pertama
+          if (!$targetQuestion) {
+               $targetQuestion = (clone $query)->first(); 
+          }
+    }
+
+
+    // Update state jika soal ditemukan
+    if ($targetQuestion) {
+        $this->currentQuestion = $targetQuestion;
+        $this->updateProgress($this->currentQuestion->id); // Update checkpoint
+        // Hitung counter yang benar berdasarkan posisi soal TERBARU
+        $this->questionCounter = $this->activeTopic->questions()->where('id', '<=', $this->currentQuestion->id)->orderBy('id', 'asc')->count();
+    } 
+    // Jika tidak ada soal ditemukan sama sekali (topik kosong), set null
+    elseif ($direction !== 'prev') { // Jangan reset jika gagal 'prev'
+         $this->currentQuestion = null;
+         $this->questionCounter = 0;
+    }
+
+    // Selalu reset tampilan saat load soal baru (kecuali resume)
+    if ($direction !== 'resume') {
+        $this->resetStateForNextQuestion();
+    }
+}
+3.	Sesuaikan Pemanggilan loadQuestion di Method Lain:
+o	Di selectTopic($topicId): Panggil loadQuestion dengan direction 'resume'.
+PHP
+#[On('topicSelected')] 
+public function selectTopic($topicId) {
+     // ... (load activeTopic, reset state, etc) ...
+     if ($this->activeTopic) {
+         $this->totalQuestionsInTopic = $this->activeTopic->questions()->count();
+         $progress = $this->getProgress();
+         $lastQuestionId = $progress?->last_viewed_question_id;
+
+         // Panggil loadQuestion untuk RESUME
+         $this->loadQuestion($lastQuestionId, 'resume'); // <-- UBAH DI SINI
+
+         $this->dispatch('topicChanged', topicId: $topicId);
+     }
+}
+o	Di nextQuestion(): Panggil loadQuestion dengan ID soal saat ini.
+PHP
+public function nextQuestion() {
+    // ... (logic checkAnswer & showExplanation) ...
+    if ($this->showExplanation) { // Hanya pindah jika sudah koreksi
+         $this->loadQuestion($this->currentQuestion->id, 'next'); // <-- UBAH DI SINI
+         // resetStateForNextQuestion() sudah dipanggil di dalam loadQuestion('next')
+    } else {
+         $this->checkAnswer();
+         $this->showExplanation = true;
+    }
+}
+o	Di prevQuestion(): Panggil loadQuestion dengan ID soal saat ini dan direction 'prev'.
+PHP
+public function prevQuestion() {
+    if (!$this->activeTopic || !$this->currentQuestion || $this->showExplanation) return;
+    $this->loadQuestion($this->currentQuestion->id, 'prev'); // <-- UBAH DI SINI
+     // resetStateForNextQuestion() sudah dipanggil di dalam loadQuestion('prev')
+}
+________________________________________
+3. Implementasi UI Mobile Sidebar (resources/views/bank-soal/show-subject.blade.php)
+Masalah: Sidebar topik muncul di bawah konten pada layar mobile.
+Tindakan: Gunakan Alpine.js untuk membuat sidebar off-canvas (geser) yang bisa dibuka-tutup di mobile.
+1.	Buka file resources/views/bank-soal/show-subject.blade.php.
+2.	Tambahkan x-data di div root untuk mengelola status sidebar:
+Blade
+{{-- Ganti div root --}}
+<div x-data="{ sidebarOpen: false }" 
+     class="flex flex-col md:flex-row min-h-screen bg-gray-50"> 
+3.	Modifikasi <aside> (Sidebar Kiri):
+o	Tambahkan class untuk positioning mobile (fixed, inset-y-0, left-0, z-30), background overlay, transition, dan conditional class (translate-x-0 vs -translate-x-full) berdasarkan sidebarOpen.
+o	Tambahkan tombol "Tutup" di dalam sidebar.
+Blade
+    {{-- Tambahkan class fixed, inset, transform, transition, dll --}}
+    <aside 
+        x-show="sidebarOpen" 
+        x-transition:enter="transition ease-in-out duration-300 transform"
+        x-transition:enter-start="-translate-x-full"
+        x-transition:enter-end="translate-x-0"
+        x-transition:leave="transition ease-in-out duration-300 transform"
+        x-transition:leave-start="translate-x-0"
+        x-transition:leave-end="-translate-x-full"
+        @click.away="sidebarOpen = false" {{-- Tutup saat klik di luar --}}
+        class="fixed inset-y-0 left-0 z-40 w-64 md:w-4/12 lg:w-3/12 xl:w-2/12 p-4 bg-white border-r shadow-lg overflow-y-auto 
+               md:sticky md:top-0 md:translate-x-0 md:shadow-md md:z-auto md:h-screen md:order-first" {{-- Reset style untuk desktop --}}
+        x-cloak {{-- Sembunyikan awal sebelum JS jalan --}}
+        >
+
+        {{-- Tombol Tutup (Hanya Mobile) --}}
+        <div class="md:hidden flex justify-end mb-2">
+            <button @click="sidebarOpen = false" class="text-gray-500 hover:text-gray-700">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+        </div>
+
+        {{-- ... (Header Subtes & Navigasi Topik - KODE LAMA TETAP DI SINI) ... --}}
+        {{-- Tombol topik sekarang juga harus menutup sidebar --}}
+        <button 
+            onclick="Livewire.dispatchTo('bank-soal.practice-area', 'topicSelected', { topicId: {{ $topic->id }} })" 
+            @click="sidebarOpen = false" {{-- <-- TAMBAHKAN INI --}}
+            type="button"
+            {{-- ... (class lainnya) ... }}
+        >
+        {{-- ... --}}
+        </button>
+
+    </aside>
+
+     {{-- Background Overlay (Hanya Mobile) --}}
+     <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden" x-cloak></div>
+
+4.	Modifikasi <main> (Konten Kanan):
+o	Pastikan width di desktop benar. Padding mungkin perlu disesuaikan agar tidak tertutup sidebar.
+Blade
+    <main class="w-full p-6 md:p-10 order-first md:order-last">
+         {{-- Tombol Buka Sidebar (Hanya Mobile) --}}
+        <button @click="sidebarOpen = true" class="md:hidden mb-4 p-2 bg-white rounded shadow border text-gray-600">
+             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
+        </button>
+
+        {{-- Panggil komponen Livewire (Kode Lama Tetap) --}}
+        @livewire('bank-soal.practice-area', ['subject' => $subject], key($subject->id)) 
+    </main>
+5.	Perbarui CSS di @push('styles'):
+o	Hapus style h-screen-nav-mobile yang lama.
+CSS
+@push('styles')
+<style>
+    /* Hapus style lama .h-screen-nav-mobile */
+    /* Pastikan prose tidak rusak */
+    .prose p { margin-top: 0; margin-bottom: 0.5em; } 
+    button span.prose { display: inline; } 
+    .prose-sm { font-size: 0.875rem; line-height: 1.5rem; }
+     .prose ul, .prose ol { margin-top: 0.5em; margin-bottom: 0.5em; }
+     .prose li p { margin-bottom: 0.2em; }
+     /* Tambahan untuk sidebar aktif */
+     .topic-button.active { ... }
+     .topic-button.active .topic-arrow { ... }
+     /* X-Cloak */
+     [x-cloak] { display: none !important; }
+</style>
+@endpush
+________________________________________
+Jalanin prompt ini. Ini akan:
+1.	Memperbaiki teks feedback benar/salah.
+2.	Merombak total logic loadQuestion agar checkpoint berfungsi benar dan urutan soal konsisten (orderBy('id')).
+3.	Mengimplementasikan sidebar geser off-canvas untuk tampilan mobile menggunakan Alpine.js.
+

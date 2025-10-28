@@ -2,18 +2,24 @@
 
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\TryoutController;
+use App\Http\Controllers\PostController;
 use App\Http\Controllers\Admin\AdminController;
 use App\Http\Controllers\Admin\SubjectController;
 use App\Http\Controllers\Admin\TopicController;
 use App\Http\Controllers\Admin\QuestionController;
 use App\Http\Controllers\Admin\TryoutPackageController;
-use App\Http\Controllers\Admin\PostController;
+use App\Http\Controllers\Admin\PostController as AdminPostController;
+use App\Http\Controllers\BankSoalController;
 use Illuminate\Support\Facades\Route;
 
 // Public Routes
 Route::get('/', function () {
     return view('welcome');
 })->name('home');
+
+// Public Posts Routes
+Route::get('/posts', [PostController::class, 'index'])->name('posts.index');
+Route::get('/posts/{post:slug}', [PostController::class, 'show'])->name('posts.show');
 
 // Tryout Routes (Public - dapat diakses tanpa login untuk melihat daftar)
 Route::get('/tryouts', [TryoutController::class, 'index'])->name('tryouts.index');
@@ -25,8 +31,31 @@ Route::middleware(['auth', 'verified'])->group(function () {
     })->name('dashboard');
 
     // Tryout Routes for authenticated users
-    Route::get('/tryout/{userTryout}/conduct', [TryoutController::class, 'conduct'])->name('tryout.conduct');
+    // Route baru untuk halaman 'Detail Paket' (Hub 7 Subtes)
+    Route::get('/tryout/detail/{userTryout}', [TryoutController::class, 'detail'])
+            ->name('tryout.detail');
+
+    // Route baru untuk MENGERJAKAN SATU SUBTES
+    // Kita pakai Route Model Binding ke UserSubtestProgress
+    Route::get('/tryout/conduct/{subtestProgress}', [TryoutController::class, 'conductSubtest'])
+            ->name('tryout.conduct');
+
+    // Route BARU untuk halaman Review Pembahasan per Subtes
+    Route::get('/tryout/review/{subtestProgress}', [TryoutController::class, 'reviewSubtest'])
+            ->name('tryout.review');
+
+    // Route BARU untuk Halaman Hasil Keseluruhan
+    Route::get('/tryout/result/overall/{userTryout}', [TryoutController::class, 'overallResult'])
+            ->middleware('auth')
+            ->name('tryout.result.overall');
+    
     Route::get('/tryout/{userTryout}/result', [TryoutController::class, 'result'])->name('tryout.result');
+
+    // Bank Soal Routes (Latihan Mandiri) - NEW IMPLEMENTATION
+    Route::middleware('auth')->prefix('bank-soal')->name('bank-soal.')->group(function () {
+        Route::get('/', [BankSoalController::class, 'index'])->name('index'); // Hal. Utama (7 Subtes)
+        Route::get('/{subject:slug}', [BankSoalController::class, 'showSubject'])->name('subject.show'); // Hal. Detail Subtes (2 kolom)
+    });
 });
 
 // Profile Routes
@@ -59,7 +88,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::post('tryout-packages/{package}/questions/reorder', [TryoutPackageController::class, 'updateQuestionOrder'])->name('tryout-packages.reorder-questions');
     
     // Post Management
-    Route::resource('posts', PostController::class);
+    Route::resource('posts', AdminPostController::class);
 });
 
 require __DIR__.'/auth.php';

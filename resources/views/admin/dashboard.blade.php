@@ -150,7 +150,7 @@
                                     </span>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                    {{ $tryout->score ? number_format($tryout->score, 1) : '-' }}
+                                    {{ $tryout->score ? number_format($tryout->score, 0) : '-' }}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     {{ $tryout->start_time->format('d M Y H:i') }}
