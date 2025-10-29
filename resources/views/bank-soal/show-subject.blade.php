@@ -73,13 +73,32 @@
             <nav class="space-y-1">
                 @forelse($subject->topics as $topic)
                     {{-- Tombol ini akan memicu event di komponen Livewire PracticeArea --}}
+                    @php
+                        $topicProgress = $progressByTopic->get($topic->id);
+                        $attempted = $topicProgress?->correct_count + $topicProgress?->incorrect_count;
+                        $accuracy = $attempted ? round(($topicProgress->correct_count / $attempted) * 100) : null;
+                    @endphp
                     <button 
                         onclick="Livewire.dispatch('topicSelected', { topicId: {{ $topic->id }} })"
                         type="button"
-                        class="w-full text-left px-3 py-2 rounded-md text-sm transition duration-150 ease-in-out flex justify-between items-center topic-button text-gray-700 hover:bg-gray-100"
+                        class="w-full text-left px-3 py-2 rounded-md transition duration-150 ease-in-out flex justify-between items-center topic-button text-gray-700 hover:bg-gray-100"
                         data-topic-id="{{ $topic->id }}"> 
-                        <span>{{ $topic->name }}</span>
-                         <svg class="w-4 h-4 text-gray-400 opacity-0 topic-arrow" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"></path></svg>
+                        <div class="flex-1">
+                            <div class="text-sm font-medium text-gray-900">{{ $topic->name }}</div>
+                            <div class="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                                <span>{{ $topic->questions_count ?? 0 }} soal</span>
+                                @if($topicProgress)
+                                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700">
+                                        {{ $topicProgress->correct_count }}/{{ $attempted }} benar
+                                    </span>
+                                    <span class="text-gray-400">•</span>
+                                    <span>{{ $accuracy !== null ? $accuracy.'%' : '—' }} akurasi</span>
+                                @endif
+                            </div>
+                        </div>
+                        <svg class="w-4 h-4 text-gray-400 opacity-0 topic-arrow" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                        </svg>
                     </button>
                 @empty
                     <p class="px-3 text-xs text-gray-400">Belum ada topik.</p>

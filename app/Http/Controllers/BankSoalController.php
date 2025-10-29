@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Subject;
+use App\Models\UserPracticeProgress;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 
 class BankSoalController extends Controller
@@ -21,10 +23,21 @@ class BankSoalController extends Controller
     // Menampilkan halaman detail Subtes (Layout 2 kolom + Livewire)
     public function showSubject(Subject $subject): View
     {
-        // Load topik untuk sidebar
-        $subject->load(['topics' => fn($q) => $q->withCount('questions')->orderBy('name')]); 
+        $subject->load(['topics' => fn ($q) => $q->withCount('questions')->orderBy('name')]);
 
-        // View Blade ini akan berisi komponen Livewire untuk area kanan
-        return view('bank-soal.show-subject', compact('subject')); 
+        $progressByTopic = collect();
+        if (Auth::check()) {
+            $topicIds = $subject->topics->pluck('id');
+            $progressByTopic = UserPracticeProgress::query()
+                ->where('user_id', Auth::id())
+                ->whereIn('topic_id', $topicIds)
+                ->get()
+                ->keyBy('topic_id');
+        }
+
+        return view('bank-soal.show-subject', [
+            'subject' => $subject,
+            'progressByTopic' => $progressByTopic,
+        ]);
     }
 }
