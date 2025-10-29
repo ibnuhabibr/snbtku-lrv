@@ -22,7 +22,7 @@ class BankSoalController extends Controller
     public function showSubject(Subject $subject): View
     {
         // Load topik untuk sidebar
-        $subject->load(['topics' => fn($q) => $q->orderBy('name')]); 
+        $subject->load(['topics' => fn($q) => $q->withCount('questions')->orderBy('name')]); 
 
         // View Blade ini akan berisi komponen Livewire untuk area kanan
         return view('bank-soal.show-subject', compact('subject')); 

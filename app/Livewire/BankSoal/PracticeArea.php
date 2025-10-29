@@ -8,7 +8,6 @@ use App\Models\Topic;
 use App\Models\Question;
 use App\Models\UserPracticeProgress;
 use Illuminate\Support\Facades\Auth;
-use Livewire\Attributes\On;
 
 class PracticeArea extends Component
 {
@@ -30,14 +29,8 @@ class PracticeArea extends Component
 
     public function mount(Subject $subject)
     {
-        $this->subject = $subject;
+        $this->subject = $subject->load(['topics' => fn ($query) => $query->withCount('questions')->orderBy('name')]);
         $this->showTopicList = false;
-    }
-
-    public function selectTopicFromSidebar($topicId)
-    {
-        \Log::info('selectTopicFromSidebar called with topicId: ' . $topicId);
-        $this->selectTopic($topicId);
     }
 
     public function handleTopicSelected($data)
@@ -80,10 +73,10 @@ class PracticeArea extends Component
         $this->totalQuestions = count($this->questions);
     }
 
-    #[On('topicSelected')]
     public function selectTopic($topicId)
     {
         $this->currentTopic = Topic::with('questions')->findOrFail($topicId);
+        $this->showTopicList = false;
         
         // Load atau buat progress user
         $this->loadUserProgress();
@@ -239,3 +232,6 @@ class PracticeArea extends Component
         return view('livewire.bank-soal.practice-area');
     }
 }
+
+
+

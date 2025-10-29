@@ -74,7 +74,7 @@
                 @forelse($subject->topics as $topic)
                     {{-- Tombol ini akan memicu event di komponen Livewire PracticeArea --}}
                     <button 
-                        onclick="window.selectTopicFromSidebar({{ $topic->id }})"
+                        onclick="Livewire.dispatch('topicSelected', { topicId: {{ $topic->id }} })"
                         type="button"
                         class="w-full text-left px-3 py-2 rounded-md text-sm transition duration-150 ease-in-out flex justify-between items-center topic-button text-gray-700 hover:bg-gray-100"
                         data-topic-id="{{ $topic->id }}"> 
@@ -162,37 +162,30 @@
 @endpush
 @push('scripts')
 <script>
-    // Simple global function for topic selection
-    window.selectTopicFromSidebar = function(topicId) {
-        console.log('selectTopicFromSidebar called with:', topicId);
-        
-        // Dispatch a custom event that Livewire can listen to
-        window.dispatchEvent(new CustomEvent('topic-selected-from-sidebar', {
-            detail: { topicId: topicId }
-        }));
-    };
-
     document.addEventListener('DOMContentLoaded', function() {
-        // Listener untuk highlight tombol topik aktif
-        document.addEventListener('livewire:navigated', () => {
-            if (window.Livewire) {
-                Livewire.on('topicChanged', (event) => {
-                    document.querySelectorAll('.topic-button').forEach(button => {
-                        button.classList.remove('active', 'bg-gradient-to-r', 'from-indigo-100', 'to-blue-100', 'text-blue-800', 'font-semibold', 'shadow-inner');
-                        button.classList.add('text-gray-700', 'hover:bg-gray-100');
-                        const arrow = button.querySelector('.topic-arrow');
-                        if (arrow) arrow.style.opacity = '0';
-                    });
-                    const activeButton = document.querySelector(`.topic-button[data-topic-id="${event.topicId}"]`);
-                    if (activeButton) {
-                        activeButton.classList.add('active', 'bg-gradient-to-r', 'from-indigo-100', 'to-blue-100', 'text-blue-800', 'font-semibold', 'shadow-inner');
-                        activeButton.classList.remove('text-gray-700', 'hover:bg-gray-100');
-                         const activeArrow = activeButton.querySelector('.topic-arrow');
-                         if(activeArrow) activeArrow.style.opacity = '1';
-                    }
+        const registerHighlightListener = () => {
+            Livewire.on('topicChanged', ({ topicId }) => {
+                document.querySelectorAll('.topic-button').forEach(button => {
+                    button.classList.remove('active', 'bg-gradient-to-r', 'from-indigo-100', 'to-blue-100', 'text-blue-800', 'font-semibold', 'shadow-inner');
+                    button.classList.add('text-gray-700', 'hover:bg-gray-100');
+                    const arrow = button.querySelector('.topic-arrow');
+                    if (arrow) arrow.style.opacity = '0';
                 });
-            }
-        });
+                const activeButton = document.querySelector(`.topic-button[data-topic-id="${topicId}"]`);
+                if (activeButton) {
+                    activeButton.classList.add('active', 'bg-gradient-to-r', 'from-indigo-100', 'to-blue-100', 'text-blue-800', 'font-semibold', 'shadow-inner');
+                    activeButton.classList.remove('text-gray-700', 'hover:bg-gray-100');
+                    const activeArrow = activeButton.querySelector('.topic-arrow');
+                    if (activeArrow) activeArrow.style.opacity = '1';
+                }
+            });
+        };
+
+        if (window.Livewire) {
+            registerHighlightListener();
+        } else {
+            document.addEventListener('livewire:init', registerHighlightListener, { once: true });
+        }
     });
 </script>
 @endpush

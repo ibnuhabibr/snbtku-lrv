@@ -12,6 +12,7 @@ class Subject extends Model
     protected $fillable = [
         'name',
         'slug',
+        'subtest_order',
     ];
 
     /**
