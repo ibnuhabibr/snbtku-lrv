@@ -1,222 +1,264 @@
-PERHATIAN AI AGENT: Lakukan perbaikan pada fitur Bank Soal (PracticeArea component & view) untuk mengatasi 3 bug: teks feedback salah, checkpoint tidak berfungsi/soal acak saat refresh, dan UI mobile yang buruk.
-________________________________________
-1. Perbaikan Teks Feedback (resources/views/livewire/bank-soal/practice-area.blade.php)
-Masalah: Teks feedback ("Jawaban Benar/Salah") selalu menampilkan pesan "Salah" meskipun styling visualnya (hijau/merah) sudah benar.
-Tindakan:
-1.	Buka file resources/views/livewire/bank-soal/practice-area.blade.php.
-2.	Cari section Feedback & Pembahasan (di dalam div x-data="{ show: @entangle('showExplanation') }").
-3.	Cari div yang menampilkan teks feedback (yang punya class @if($isCorrect === true) bg-green-50 ...).
-4.	Periksa dan perbaiki logic @if/@elseif/@else di dalamnya agar menampilkan teks yang benar:
-Blade
-{{-- Di dalam div Feedback --}}
-<div class="mb-4 p-4 rounded-lg border 
-    @if($isCorrect === true) bg-green-50 border-green-300 text-green-800 
-    @elseif($isCorrect === false) bg-red-50 border-red-300 text-red-800 
-    @else bg-gray-50 border-gray-300 text-gray-800 @endif">
-
-    {{-- PASTIKAN LOGIC INI BENAR --}}
-    @if($isCorrect === true)
-        <p class="font-semibold"><svg class="inline w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">...</svg> Jawaban Kamu Benar!</p>
-    @elseif($isCorrect === false)
-        <p class="font-semibold"><svg class="inline w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">...</svg> Jawaban Kamu Salah.</p>
-        <p class="text-sm mt-1">Jawaban yang benar: <span class="uppercase font-bold">{{ $currentQuestion?->correct_answer }}</span>.</p> {{-- Tambah ? --}}
-    @elseif($isCorrect === null && $showExplanation) {{-- Tidak Menjawab --}}
-         <p class="font-semibold"><svg class="inline w-5 h-5 mr-1" fill="currentColor" viewBox="0 0 20 20">...</svg> Kamu tidak memilih jawaban.</p>
-         <p class="text-sm mt-1">Jawaban yang benar: <span class="uppercase font-bold">{{ $currentQuestion?->correct_answer }}</span>.</p> {{-- Tambah ? --}}
-    @endif
-    {{-- AKHIR PERBAIKAN LOGIC --}}
-</div>
-________________________________________
-2. Perbaikan Bug Checkpoint & Urutan Soal (app/Livewire/BankSoal/PracticeArea.php)
-Masalah:
-•	Saat halaman di-refresh, user tidak kembali ke soal terakhir yang dilihat (last_viewed_question_id), malah ke soal random.
-•	Urutan soal terasa acak setelah refresh.
-Akar Masalah:
-•	Logic loadQuestion($lastQuestionId) salah dalam menggunakan checkpoint dan mungkin tidak konsisten menerapkan orderBy('id', 'asc').
-•	Perhitungan $questionCounter saat resume kemungkinan salah.
-Tindakan: Ganti total method loadQuestion dan sesuaikan selectTopic.
-1.	Buka file app/Livewire/BankSoal/PracticeArea.php.
-2.	Ganti method loadQuestion dengan logic baru yang lebih robust:
-PHP
-private function loadQuestion($pivotQuestionId = null, $direction = 'next') // $pivotQuestionId: ID soal SEBELUMNYA (jika next) atau SESUDAHNYA (jika prev)
-{
-    if (!$this->activeTopic) return;
-
-    $query = $this->activeTopic->questions()->orderBy('id', 'asc'); // SELALU ORDER BY ID ASC
-
-    $targetQuestion = null;
-
-    if ($direction === 'next') {
-        if ($pivotQuestionId) {
-             // Cari soal SETELAH pivot ID
-            $targetQuestion = (clone $query)->where('id', '>', $pivotQuestionId)->first();
-        } else {
-             // Jika tidak ada pivot (awal), ambil soal pertama
-            $targetQuestion = (clone $query)->first();
-        }
-        // Jika tidak ada soal SETELAH pivot (sudah di akhir), loop ke awal
-        if (!$targetQuestion && $this->totalQuestionsInTopic > 0) {
-             $targetQuestion = (clone $query)->first(); 
-             // session()->flash('info', 'Anda telah mencapai soal terakhir. Soal dimulai dari awal.');
-        }
-    } 
-    elseif ($direction === 'prev') {
-         if ($pivotQuestionId) {
-             // Cari soal SEBELUM pivot ID
-             $targetQuestion = (clone $query)->where('id', '<', $pivotQuestionId)->orderBy('id', 'desc')->first(); 
-         }
-         // Jika tidak ada pivot ATAU tidak ada soal sebelumnya, tetap di soal ini (jangan load apa2)
-    }
-    elseif ($direction === 'resume' && $pivotQuestionId) {
-         // Langsung load soal DENGAN ID checkpoint
-          $targetQuestion = (clone $query)->find($pivotQuestionId);
-         // Jika checkpoint tidak valid (misal soal dihapus), fallback ke soal pertama
-          if (!$targetQuestion) {
-               $targetQuestion = (clone $query)->first(); 
-          }
-    }
-
-
-    // Update state jika soal ditemukan
-    if ($targetQuestion) {
-        $this->currentQuestion = $targetQuestion;
-        $this->updateProgress($this->currentQuestion->id); // Update checkpoint
-        // Hitung counter yang benar berdasarkan posisi soal TERBARU
-        $this->questionCounter = $this->activeTopic->questions()->where('id', '<=', $this->currentQuestion->id)->orderBy('id', 'asc')->count();
-    } 
-    // Jika tidak ada soal ditemukan sama sekali (topik kosong), set null
-    elseif ($direction !== 'prev') { // Jangan reset jika gagal 'prev'
-         $this->currentQuestion = null;
-         $this->questionCounter = 0;
-    }
-
-    // Selalu reset tampilan saat load soal baru (kecuali resume)
-    if ($direction !== 'resume') {
-        $this->resetStateForNextQuestion();
-    }
-}
-3.	Sesuaikan Pemanggilan loadQuestion di Method Lain:
-o	Di selectTopic($topicId): Panggil loadQuestion dengan direction 'resume'.
-PHP
-#[On('topicSelected')] 
-public function selectTopic($topicId) {
-     // ... (load activeTopic, reset state, etc) ...
-     if ($this->activeTopic) {
-         $this->totalQuestionsInTopic = $this->activeTopic->questions()->count();
-         $progress = $this->getProgress();
-         $lastQuestionId = $progress?->last_viewed_question_id;
-
-         // Panggil loadQuestion untuk RESUME
-         $this->loadQuestion($lastQuestionId, 'resume'); // <-- UBAH DI SINI
-
-         $this->dispatch('topicChanged', topicId: $topicId);
-     }
-}
-o	Di nextQuestion(): Panggil loadQuestion dengan ID soal saat ini.
-PHP
-public function nextQuestion() {
-    // ... (logic checkAnswer & showExplanation) ...
-    if ($this->showExplanation) { // Hanya pindah jika sudah koreksi
-         $this->loadQuestion($this->currentQuestion->id, 'next'); // <-- UBAH DI SINI
-         // resetStateForNextQuestion() sudah dipanggil di dalam loadQuestion('next')
-    } else {
-         $this->checkAnswer();
-         $this->showExplanation = true;
-    }
-}
-o	Di prevQuestion(): Panggil loadQuestion dengan ID soal saat ini dan direction 'prev'.
-PHP
-public function prevQuestion() {
-    if (!$this->activeTopic || !$this->currentQuestion || $this->showExplanation) return;
-    $this->loadQuestion($this->currentQuestion->id, 'prev'); // <-- UBAH DI SINI
-     // resetStateForNextQuestion() sudah dipanggil di dalam loadQuestion('prev')
-}
-________________________________________
-3. Implementasi UI Mobile Sidebar (resources/views/bank-soal/show-subject.blade.php)
-Masalah: Sidebar topik muncul di bawah konten pada layar mobile.
-Tindakan: Gunakan Alpine.js untuk membuat sidebar off-canvas (geser) yang bisa dibuka-tutup di mobile.
-1.	Buka file resources/views/bank-soal/show-subject.blade.php.
-2.	Tambahkan x-data di div root untuk mengelola status sidebar:
-Blade
-{{-- Ganti div root --}}
-<div x-data="{ sidebarOpen: false }" 
-     class="flex flex-col md:flex-row min-h-screen bg-gray-50"> 
-3.	Modifikasi <aside> (Sidebar Kiri):
-o	Tambahkan class untuk positioning mobile (fixed, inset-y-0, left-0, z-30), background overlay, transition, dan conditional class (translate-x-0 vs -translate-x-full) berdasarkan sidebarOpen.
-o	Tambahkan tombol "Tutup" di dalam sidebar.
-Blade
-    {{-- Tambahkan class fixed, inset, transform, transition, dll --}}
-    <aside 
-        x-show="sidebarOpen" 
-        x-transition:enter="transition ease-in-out duration-300 transform"
-        x-transition:enter-start="-translate-x-full"
-        x-transition:enter-end="translate-x-0"
-        x-transition:leave="transition ease-in-out duration-300 transform"
-        x-transition:leave-start="translate-x-0"
-        x-transition:leave-end="-translate-x-full"
-        @click.away="sidebarOpen = false" {{-- Tutup saat klik di luar --}}
-        class="fixed inset-y-0 left-0 z-40 w-64 md:w-4/12 lg:w-3/12 xl:w-2/12 p-4 bg-white border-r shadow-lg overflow-y-auto 
-               md:sticky md:top-0 md:translate-x-0 md:shadow-md md:z-auto md:h-screen md:order-first" {{-- Reset style untuk desktop --}}
-        x-cloak {{-- Sembunyikan awal sebelum JS jalan --}}
-        >
-
-        {{-- Tombol Tutup (Hanya Mobile) --}}
-        <div class="md:hidden flex justify-end mb-2">
-            <button @click="sidebarOpen = false" class="text-gray-500 hover:text-gray-700">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
-        </div>
-
-        {{-- ... (Header Subtes & Navigasi Topik - KODE LAMA TETAP DI SINI) ... --}}
-        {{-- Tombol topik sekarang juga harus menutup sidebar --}}
-        <button 
-            onclick="Livewire.dispatchTo('bank-soal.practice-area', 'topicSelected', { topicId: {{ $topic->id }} })" 
-            @click="sidebarOpen = false" {{-- <-- TAMBAHKAN INI --}}
-            type="button"
-            {{-- ... (class lainnya) ... }}
-        >
-        {{-- ... --}}
-        </button>
-
-    </aside>
-
-     {{-- Background Overlay (Hanya Mobile) --}}
-     <div x-show="sidebarOpen" @click="sidebarOpen = false" class="fixed inset-0 bg-black bg-opacity-50 z-30 md:hidden" x-cloak></div>
-
-4.	Modifikasi <main> (Konten Kanan):
-o	Pastikan width di desktop benar. Padding mungkin perlu disesuaikan agar tidak tertutup sidebar.
-Blade
-    <main class="w-full p-6 md:p-10 order-first md:order-last">
-         {{-- Tombol Buka Sidebar (Hanya Mobile) --}}
-        <button @click="sidebarOpen = true" class="md:hidden mb-4 p-2 bg-white rounded shadow border text-gray-600">
-             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
-        </button>
-
-        {{-- Panggil komponen Livewire (Kode Lama Tetap) --}}
-        @livewire('bank-soal.practice-area', ['subject' => $subject], key($subject->id)) 
-    </main>
-5.	Perbarui CSS di @push('styles'):
-o	Hapus style h-screen-nav-mobile yang lama.
-CSS
-@push('styles')
-<style>
-    /* Hapus style lama .h-screen-nav-mobile */
-    /* Pastikan prose tidak rusak */
-    .prose p { margin-top: 0; margin-bottom: 0.5em; } 
-    button span.prose { display: inline; } 
-    .prose-sm { font-size: 0.875rem; line-height: 1.5rem; }
-     .prose ul, .prose ol { margin-top: 0.5em; margin-bottom: 0.5em; }
-     .prose li p { margin-bottom: 0.2em; }
-     /* Tambahan untuk sidebar aktif */
-     .topic-button.active { ... }
-     .topic-button.active .topic-arrow { ... }
-     /* X-Cloak */
-     [x-cloak] { display: none !important; }
-</style>
-@endpush
-________________________________________
-Jalanin prompt ini. Ini akan:
-1.	Memperbaiki teks feedback benar/salah.
-2.	Merombak total logic loadQuestion agar checkpoint berfungsi benar dan urutan soal konsisten (orderBy('id')).
-3.	Mengimplementasikan sidebar geser off-canvas untuk tampilan mobile menggunakan Alpine.js.
-
+pilahpintar@server1:/var/www/snbtku$ sudo nano /var/www/snbtku/composer.json
+[sudo] password for pilahpintar: 
+pilahpintar@server1:/var/www/snbtku$ sudo nano /var/www/snbtku/composer.json
+pilahpintar@server1:/var/www/snbtku$ sudo rm -f composer.lock
+pilahpintar@server1:/var/www/snbtku$ sudo rm -rf vendor/
+pilahpintar@server1:/var/www/snbtku$ sudo -u www-data composer install --optimize-autoloader --no-dev
+No composer.lock file present. Updating dependencies to latest instead of installing from lock file. See https://getcomposer.org/install for more information.
+Loading composer repositories with package information
+Cannot create cache directory /var/www/.cache/composer/repo/https---repo.packagist.org/, or directory is not writable. Proceeding without cache. See also cache-read-only config if your filesystem is read-only.
+Updating dependencies
+Lock file operations: 105 installs, 0 updates, 0 removals
+  - Locking brick/math (0.12.3)
+  - Locking carbonphp/carbon-doctrine-types (2.1.0)
+  - Locking dflydev/dot-access-data (v3.0.3)
+  - Locking doctrine/inflector (2.1.0)
+  - Locking doctrine/lexer (3.0.1)
+  - Locking dragonmantank/cron-expression (v3.4.0)
+  - Locking egulias/email-validator (4.0.4)
+  - Locking fakerphp/faker (v1.24.1)
+  - Locking filp/whoops (2.18.4)
+  - Locking fruitcake/php-cors (v1.3.0)
+  - Locking graham-campbell/result-type (v1.1.3)
+  - Locking guzzlehttp/uri-template (v1.0.5)
+  - Locking hamcrest/hamcrest-php (v2.1.1)
+  - Locking laravel/breeze (v1.29.1)
+  - Locking laravel/framework (v10.49.1)
+  - Locking laravel/pint (v1.20.0)
+  - Locking laravel/prompts (v0.1.25)
+  - Locking laravel/sail (v1.47.0)
+  - Locking laravel/serializable-closure (v1.3.7)
+  - Locking laravel/tinker (v2.10.1)
+  - Locking league/commonmark (2.7.1)
+  - Locking league/config (v1.2.0)
+  - Locking league/flysystem (3.30.1)
+  - Locking league/flysystem-local (3.30.0)
+  - Locking league/mime-type-detection (1.16.0)
+  - Locking livewire/livewire (v3.6.4)
+  - Locking mockery/mockery (1.6.12)
+  - Locking monolog/monolog (3.9.0)
+  - Locking myclabs/deep-copy (1.13.4)
+  - Locking nesbot/carbon (2.73.0)
+  - Locking nette/schema (v1.3.2)
+  - Locking nette/utils (v4.0.8)
+  - Locking nikic/php-parser (v5.6.2)
+  - Locking nunomaduro/collision (v7.12.0)
+  - Locking nunomaduro/termwind (v1.17.0)
+  - Locking phar-io/manifest (2.0.4)
+  - Locking phar-io/version (3.2.1)
+  - Locking phpoption/phpoption (1.9.4)
+  - Locking phpunit/php-code-coverage (10.1.16)
+  - Locking phpunit/php-file-iterator (4.1.0)
+  - Locking phpunit/php-invoker (4.0.0)
+  - Locking phpunit/php-text-template (3.0.1)
+  - Locking phpunit/php-timer (6.0.0)
+  - Locking phpunit/phpunit (10.5.58)
+  - Locking psr/clock (1.0.0)
+  - Locking psr/container (2.0.2)
+  - Locking psr/event-dispatcher (1.0.0)
+  - Locking psr/log (3.0.2)
+  - Locking psr/simple-cache (3.0.0)
+  - Locking psy/psysh (v0.12.14)
+  - Locking ramsey/collection (2.1.1)
+  - Locking ramsey/uuid (4.9.1)
+  - Locking sebastian/cli-parser (2.0.1)
+  - Locking sebastian/code-unit (2.0.0)
+  - Locking sebastian/code-unit-reverse-lookup (3.0.0)
+  - Locking sebastian/comparator (5.0.4)
+  - Locking sebastian/complexity (3.2.0)
+  - Locking sebastian/diff (5.1.1)
+  - Locking sebastian/environment (6.1.0)
+  - Locking sebastian/exporter (5.1.4)
+  - Locking sebastian/global-state (6.0.2)
+  - Locking sebastian/lines-of-code (2.0.2)
+  - Locking sebastian/object-enumerator (5.0.0)
+  - Locking sebastian/object-reflector (3.0.0)
+  - Locking sebastian/recursion-context (5.0.1)
+  - Locking sebastian/type (4.0.0)
+  - Locking sebastian/version (4.0.1)
+  - Locking spatie/backtrace (1.8.1)
+  - Locking spatie/error-solutions (1.1.3)
+  - Locking spatie/flare-client-php (1.10.1)
+  - Locking spatie/ignition (1.15.1)
+  - Locking spatie/laravel-ignition (2.9.1)
+  - Locking symfony/console (v6.4.27)
+  - Locking symfony/css-selector (v6.4.24)
+  - Locking symfony/deprecation-contracts (v3.6.0)
+  - Locking symfony/error-handler (v6.4.26)
+  - Locking symfony/event-dispatcher (v6.4.25)
+  - Locking symfony/event-dispatcher-contracts (v3.6.0)
+  - Locking symfony/finder (v6.4.27)
+  - Locking symfony/http-foundation (v6.4.26)
+  - Locking symfony/http-kernel (v6.4.27)
+  - Locking symfony/mailer (v6.4.27)
+  - Locking symfony/mime (v6.4.26)
+  - Locking symfony/polyfill-ctype (v1.33.0)
+  - Locking symfony/polyfill-intl-grapheme (v1.33.0)
+  - Locking symfony/polyfill-intl-idn (v1.33.0)
+  - Locking symfony/polyfill-intl-normalizer (v1.33.0)
+  - Locking symfony/polyfill-mbstring (v1.33.0)
+  - Locking symfony/polyfill-php80 (v1.33.0)
+  - Locking symfony/polyfill-php83 (v1.33.0)
+  - Locking symfony/polyfill-uuid (v1.33.0)
+  - Locking symfony/process (v6.4.26)
+  - Locking symfony/routing (v6.4.26)
+  - Locking symfony/service-contracts (v3.6.0)
+  - Locking symfony/string (v6.4.26)
+  - Locking symfony/translation (v6.4.26)
+  - Locking symfony/translation-contracts (v3.6.0)
+  - Locking symfony/uid (v6.4.24)
+  - Locking symfony/var-dumper (v6.4.26)
+  - Locking symfony/yaml (v6.4.26)
+  - Locking theseer/tokenizer (1.2.3)
+  - Locking tijsverkoyen/css-to-inline-styles (v2.3.0)
+  - Locking vlucas/phpdotenv (v5.6.2)
+  - Locking voku/portable-ascii (2.0.3)
+  - Locking webmozart/assert (1.12.1)
+Writing lock file
+Installing dependencies from lock file
+Package operations: 66 installs, 0 updates, 0 removals
+Cannot create cache directory /var/www/.cache/composer/files/, or directory is not writable. Proceeding without cache. See also cache-read-only config if your filesystem is read-only.
+  - Downloading doctrine/inflector (2.1.0)
+  - Downloading doctrine/lexer (3.0.1)
+  - Downloading symfony/polyfill-ctype (v1.33.0)
+  - Downloading webmozart/assert (1.12.1)
+  - Downloading dragonmantank/cron-expression (v3.4.0)
+  - Downloading symfony/polyfill-php83 (v1.33.0)
+  - Downloading symfony/polyfill-mbstring (v1.33.0)
+  - Downloading symfony/deprecation-contracts (v3.6.0)
+  - Downloading symfony/http-foundation (v6.4.26)
+  - Downloading fruitcake/php-cors (v1.3.0)
+  - Downloading symfony/polyfill-php80 (v1.33.0)
+  - Downloading guzzlehttp/uri-template (v1.0.5)
+  - Downloading laravel/serializable-closure (v1.3.7)
+  - Downloading symfony/var-dumper (v6.4.26)
+  - Downloading symfony/polyfill-intl-normalizer (v1.33.0)
+  - Downloading symfony/polyfill-intl-grapheme (v1.33.0)
+  - Downloading symfony/string (v6.4.26)
+  - Downloading psr/container (2.0.2)
+  - Downloading symfony/service-contracts (v3.6.0)
+  - Downloading symfony/console (v6.4.27)
+  - Downloading nikic/php-parser (v5.6.2)
+  - Downloading psy/psysh (v0.12.14)
+  - Downloading voku/portable-ascii (2.0.3)
+  - Downloading phpoption/phpoption (1.9.4)
+  - Downloading graham-campbell/result-type (v1.1.3)
+  - Downloading vlucas/phpdotenv (v5.6.2)
+  - Downloading symfony/css-selector (v6.4.24)
+  - Downloading tijsverkoyen/css-to-inline-styles (v2.3.0)
+  - Downloading symfony/polyfill-uuid (v1.33.0)
+  - Downloading symfony/uid (v6.4.24)
+  - Downloading symfony/routing (v6.4.26)
+  - Downloading symfony/process (v6.4.26)
+  - Downloading symfony/polyfill-intl-idn (v1.33.0)
+  - Downloading symfony/mime (v6.4.26)
+  - Downloading psr/event-dispatcher (1.0.0)
+  - Downloading symfony/event-dispatcher-contracts (v3.6.0)
+  - Downloading symfony/event-dispatcher (v6.4.25)
+  - Downloading psr/log (3.0.2)
+  - Downloading egulias/email-validator (4.0.4)
+  - Downloading symfony/mailer (v6.4.27)
+  - Downloading symfony/error-handler (v6.4.26)
+  - Downloading symfony/http-kernel (v6.4.27)
+  - Downloading symfony/finder (v6.4.27)
+  - Downloading ramsey/collection (2.1.1)
+  - Downloading brick/math (0.12.3)
+  - Downloading ramsey/uuid (4.9.1)
+  - Downloading psr/simple-cache (3.0.0)
+  - Downloading nunomaduro/termwind (v1.17.0)
+  - Downloading symfony/translation-contracts (v3.6.0)
+  - Downloading symfony/translation (v6.4.26)
+  - Downloading psr/clock (1.0.0)
+  - Downloading carbonphp/carbon-doctrine-types (2.1.0)
+  - Downloading nesbot/carbon (2.73.0)
+  - Downloading monolog/monolog (3.9.0)
+  - Downloading league/mime-type-detection (1.16.0)
+  - Downloading league/flysystem (3.30.1)
+  - Downloading league/flysystem-local (3.30.0)
+  - Downloading nette/utils (v4.0.8)
+  - Downloading nette/schema (v1.3.2)
+  - Downloading dflydev/dot-access-data (v3.0.3)
+  - Downloading league/config (v1.2.0)
+  - Downloading league/commonmark (2.7.1)
+  - Downloading laravel/framework (v10.49.1)
+  - Downloading laravel/prompts (v0.1.25)
+  - Downloading laravel/tinker (v2.10.1)
+  - Downloading livewire/livewire (v3.6.4)
+  - Installing doctrine/inflector (2.1.0): Extracting archive
+  - Installing doctrine/lexer (3.0.1): Extracting archive
+  - Installing symfony/polyfill-ctype (v1.33.0): Extracting archive
+  - Installing webmozart/assert (1.12.1): Extracting archive
+  - Installing dragonmantank/cron-expression (v3.4.0): Extracting archive
+  - Installing symfony/polyfill-php83 (v1.33.0): Extracting archive
+  - Installing symfony/polyfill-mbstring (v1.33.0): Extracting archive
+  - Installing symfony/deprecation-contracts (v3.6.0): Extracting archive
+  - Installing symfony/http-foundation (v6.4.26): Extracting archive
+  - Installing fruitcake/php-cors (v1.3.0): Extracting archive
+  - Installing symfony/polyfill-php80 (v1.33.0): Extracting archive
+  - Installing guzzlehttp/uri-template (v1.0.5): Extracting archive
+  - Installing laravel/serializable-closure (v1.3.7): Extracting archive
+  - Installing symfony/var-dumper (v6.4.26): Extracting archive
+  - Installing symfony/polyfill-intl-normalizer (v1.33.0): Extracting archive
+  - Installing symfony/polyfill-intl-grapheme (v1.33.0): Extracting archive
+  - Installing symfony/string (v6.4.26): Extracting archive
+  - Installing psr/container (2.0.2): Extracting archive
+  - Installing symfony/service-contracts (v3.6.0): Extracting archive
+  - Installing symfony/console (v6.4.27): Extracting archive
+  - Installing nikic/php-parser (v5.6.2): Extracting archive
+  - Installing psy/psysh (v0.12.14): Extracting archive
+  - Installing voku/portable-ascii (2.0.3): Extracting archive
+  - Installing phpoption/phpoption (1.9.4): Extracting archive
+  - Installing graham-campbell/result-type (v1.1.3): Extracting archive
+  - Installing vlucas/phpdotenv (v5.6.2): Extracting archive
+  - Installing symfony/css-selector (v6.4.24): Extracting archive
+  - Installing tijsverkoyen/css-to-inline-styles (v2.3.0): Extracting archive
+  - Installing symfony/polyfill-uuid (v1.33.0): Extracting archive
+  - Installing symfony/uid (v6.4.24): Extracting archive
+  - Installing symfony/routing (v6.4.26): Extracting archive
+  - Installing symfony/process (v6.4.26): Extracting archive
+  - Installing symfony/polyfill-intl-idn (v1.33.0): Extracting archive
+  - Installing symfony/mime (v6.4.26): Extracting archive
+  - Installing psr/event-dispatcher (1.0.0): Extracting archive
+  - Installing symfony/event-dispatcher-contracts (v3.6.0): Extracting archive
+  - Installing symfony/event-dispatcher (v6.4.25): Extracting archive
+  - Installing psr/log (3.0.2): Extracting archive
+  - Installing egulias/email-validator (4.0.4): Extracting archive
+  - Installing symfony/mailer (v6.4.27): Extracting archive
+  - Installing symfony/error-handler (v6.4.26): Extracting archive
+  - Installing symfony/http-kernel (v6.4.27): Extracting archive
+  - Installing symfony/finder (v6.4.27): Extracting archive
+  - Installing ramsey/collection (2.1.1): Extracting archive
+  - Installing brick/math (0.12.3): Extracting archive
+  - Installing ramsey/uuid (4.9.1): Extracting archive
+  - Installing psr/simple-cache (3.0.0): Extracting archive
+  - Installing nunomaduro/termwind (v1.17.0): Extracting archive
+  - Installing symfony/translation-contracts (v3.6.0): Extracting archive
+  - Installing symfony/translation (v6.4.26): Extracting archive
+  - Installing psr/clock (1.0.0): Extracting archive
+  - Installing carbonphp/carbon-doctrine-types (2.1.0): Extracting archive
+  - Installing nesbot/carbon (2.73.0): Extracting archive
+  - Installing monolog/monolog (3.9.0): Extracting archive
+  - Installing league/mime-type-detection (1.16.0): Extracting archive
+  - Installing league/flysystem (3.30.1): Extracting archive
+  - Installing league/flysystem-local (3.30.0): Extracting archive
+  - Installing nette/utils (v4.0.8): Extracting archive
+  - Installing nette/schema (v1.3.2): Extracting archive
+  - Installing dflydev/dot-access-data (v3.0.3): Extracting archive
+  - Installing league/config (v1.2.0): Extracting archive
+  - Installing league/commonmark (2.7.1): Extracting archive
+  - Installing laravel/framework (v10.49.1): Extracting archive
+  - Installing laravel/prompts (v0.1.25): Extracting archive
+  - Installing laravel/tinker (v2.10.1): Extracting archive
+  - Installing livewire/livewire (v3.6.4): Extracting archive
+53 package suggestions were added by new dependencies, use `composer suggest` to see details.
+Generating optimized autoload files
+> Illuminate\Foundation\ComposerScripts::postAutoloadDump
+> @php artisan package:discover --ansi
+PHP Fatal error:  Uncaught BadMethodCallException: Method Illuminate\Foundation\Application::configure does not exist. in /var/www/snbtku/vendor/laravel/framework/src/Illuminate/Macroable/Traits/Macroable.php:86
+Stack trace:
+#0 /var/www/snbtku/bootstrap/app.php(7): Illuminate\Foundation\Application::__callStatic()
+#1 /var/www/snbtku/artisan(12): require_once('...')
+#2 {main}
+  thrown in /var/www/snbtku/vendor/laravel/framework/src/Illuminate/Macroable/Traits/Macroable.php on line 86
+Script @php artisan package:discover --ansi handling the post-autoload-dump event returned with error code 255
+pilahpintar@server1:/var/www/snbtku$ 
